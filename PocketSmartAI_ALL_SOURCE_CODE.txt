@@ -1,0 +1,2240 @@
+
+==========================================================================================
+FILE: main.py
+==========================================================================================
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+
+from app.config import settings
+from app.database import init_db
+from app.routes.pages import router as pages_router
+from app.routes.auth_routes import router as auth_router
+from app.routes.planner_routes import router as planner_router
+from app.routes.session_routes import router as session_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(
+    title="PocketSmart AI",
+    description="Smart Budget & Recommendation Assistant",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret,
+    same_site="lax",
+    https_only=False,
+)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+app.include_router(pages_router)
+app.include_router(auth_router)
+app.include_router(planner_router)
+app.include_router(session_router)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "project": "PocketSmart AI"}
+
+
+@app.get("/startup")
+async def startup():
+    return {
+        "app": "PocketSmart AI",
+        "version": "1.0.0",
+        "ai_model": settings.gemini_model,
+        "gemini_configured": bool(settings.gemini_api_key),
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
+==========================================================================================
+FILE: requirements.txt
+==========================================================================================
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+jinja2>=3.1,<4.0
+python-multipart>=0.0.9,<1.0
+pydantic>=2.8,<3.0
+pydantic-settings>=2.4,<3.0
+itsdangerous>=2.2,<3.0
+python-jose[cryptography]>=3.3,<4.0
+google-genai>=1.0,<2.0
+httpx>=0.27,<1.0
+pytest>=8.0,<9.0
+
+==========================================================================================
+FILE: .env.example
+==========================================================================================
+APP_NAME=PocketSmart AI
+SESSION_SECRET=change-this-to-a-long-random-secret
+JWT_SECRET=change-this-to-another-long-random-secret
+JWT_EXPIRE_MINUTES=120
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+DATABASE_PATH=data/pocketsmart.db
+CORS_ORIGINS=http://127.0.0.1:8000,http://localhost:8000
+
+==========================================================================================
+FILE: .gitignore
+==========================================================================================
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+data/*.db
+static/uploads/*
+!static/uploads/.gitkeep
+.idea/
+.vscode/
+*.log
+
+==========================================================================================
+FILE: README.md
+==========================================================================================
+# PocketSmart AI
+
+PocketSmart AI is a FastAPI + Jinja2 GenAI application for budget-aware recommendations in three domains:
+
+1. Home Interior Planning
+2. Party Planning
+3. Jewelry Planning
+
+The project follows the documented architecture: modular routes, services, models, Gemini integration, authentication/session handling, responsive HTML/CSS/JavaScript, history, mock platform links, validation, and fallback recommendations.
+
+## 1. Install Python
+
+Use Python 3.11 or newer.
+
+## 2. Open the project in VS Code
+
+Open the `PocketSmartAI` folder.
+
+## 3. Create a virtual environment
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+If PowerShell blocks activation:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+Then activate again.
+
+## 4. Install packages
+
+```powershell
+pip install -r requirements.txt
+```
+
+## 5. Create `.env`
+
+Copy `.env.example` to `.env`.
+
+For AI recommendations, add your Gemini API key:
+
+```env
+GEMINI_API_KEY=your_key_here
+```
+
+If you leave it empty, the application still works using deterministic fallback recommendations.
+
+## 6. Run
+
+```powershell
+python main.py
+```
+
+Open:
+
+- http://127.0.0.1:8000
+- Swagger API docs: http://127.0.0.1:8000/docs
+
+## 7. Test
+
+```powershell
+pytest -q
+```
+
+## Main API routes
+
+- `POST /register`
+- `POST /login`
+- `POST /logout`
+- `POST /token`
+- `GET /session-info`
+- `GET /session-data`
+- `POST /session-data`
+- `GET /history`
+- `GET /recommendations-details/{history_id}`
+- `POST /generate-home`
+- `POST /generate-party`
+- `POST /generate-jewelry`
+
+## Important note about Gemini
+
+The project documentation names Gemini 1.5 Flash Pro. The implementation keeps the model configurable through `GEMINI_MODEL` and defaults to `gemini-2.5-flash`, so you can change it in `.env` if your Google AI account exposes another supported model.
+
+The app does not pretend that Amazon, Flipkart, IKEA, Swiggy, Zomato, or OYO data is live. The recommendation layer creates useful platform search links. Real product/vendor APIs can be integrated later where credentials and official APIs are available.
+
+==========================================================================================
+FILE: app/__init__.py
+==========================================================================================
+
+==========================================================================================
+FILE: app/config.py
+==========================================================================================
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    app_name: str = "PocketSmart AI"
+    session_secret: str = "change-this-secret"
+    jwt_secret: str = "change-this-jwt-secret"
+    jwt_expire_minutes: int = 120
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    database_path: str = "data/pocketsmart.db"
+    cors_origins: list[str] = [
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ]
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+settings = Settings()
+
+==========================================================================================
+FILE: app/database.py
+==========================================================================================
+import sqlite3
+from pathlib import Path
+from app.config import settings
+
+
+def get_connection():
+    Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(settings.database_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_connection()
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS recommendation_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            planner_type TEXT NOT NULL,
+            request_json TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+==========================================================================================
+FILE: app/dependencies.py
+==========================================================================================
+from fastapi import Request, HTTPException, status
+from app.database import get_connection
+
+
+def get_current_user(request: Request):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Please log in first.",
+        )
+
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, username, email, created_at FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        request.session.clear()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User session is invalid.",
+        )
+
+    return dict(row)
+
+==========================================================================================
+FILE: app/models.py
+==========================================================================================
+from typing import Optional, Literal
+from pydantic import BaseModel, Field
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    email: str = Field(min_length=5, max_length=120)
+    password: str = Field(min_length=6, max_length=100)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class HomeRequest(BaseModel):
+    budget: float = Field(gt=0)
+    rooms: list[str] = Field(min_length=1)
+    lights: int = Field(default=0, ge=0)
+    fans: int = Field(default=0, ge=0)
+    dining_tables: int = Field(default=0, ge=0)
+    sofas: int = Field(default=0, ge=0)
+    beds: int = Field(default=0, ge=0)
+    style: str = "modern"
+    notes: str = ""
+
+
+class PartyRequest(BaseModel):
+    budget: float = Field(gt=0)
+    guests: int = Field(gt=0)
+    event_type: str = "birthday"
+    venue: str = "home"
+    food_preference: str = "mixed"
+    decoration_style: str = "simple"
+    notes: str = ""
+
+
+class JewelryRequest(BaseModel):
+    budget: float = Field(gt=0)
+    occasion: str = "party"
+    style: str = "elegant"
+    metal: str = "any"
+    outfit_color: Optional[str] = None
+    notes: str = ""
+
+
+class TokenRequest(BaseModel):
+    username: str
+    password: str
+
+
+class SessionDataRequest(BaseModel):
+    key: str
+    value: str
+
+
+class RecommendationItem(BaseModel):
+    name: str
+    category: str
+    estimated_price: float
+    reason: str
+    platform: str
+    search_url: str
+
+
+class RecommendationResponse(BaseModel):
+    planner: str
+    budget: float
+    summary: str
+    allocations: dict[str, float]
+    recommendations: list[RecommendationItem]
+    tips: list[str]
+    source: Literal["gemini", "fallback"]
+
+==========================================================================================
+FILE: app/auth.py
+==========================================================================================
+import hashlib
+import hmac
+import os
+from datetime import datetime, timedelta, timezone
+from jose import jwt
+from app.config import settings
+
+
+ALGORITHM = "HS256"
+
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        120_000,
+    )
+    return f"{salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_hex, digest_hex = stored_hash.split("$", 1)
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(digest_hex)
+        actual = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            120_000,
+        )
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+def create_access_token(subject: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.jwt_expire_minutes
+    )
+    payload = {"sub": subject, "exp": expire}
+    return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
+
+==========================================================================================
+FILE: app/gemini_utils.py
+==========================================================================================
+import json
+import re
+from typing import Any, Optional
+
+from google import genai
+from google.genai import types
+
+from app.config import settings
+
+
+def format_budget(budget: float) -> str:
+    return f"₹{budget:,.2f}"
+
+
+def extract_json(text: str) -> Optional[dict[str, Any]]:
+    if not text:
+        return None
+
+    cleaned = text.strip()
+
+    # Remove common markdown code fences.
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    try:
+        value = json.loads(cleaned)
+        return value if isinstance(value, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    # Try to find the first JSON object in a normal-language response.
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            value = json.loads(cleaned[start:end + 1])
+            return value if isinstance(value, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+    return None
+
+
+def _client():
+    if not settings.gemini_api_key:
+        return None
+    return genai.Client(api_key=settings.gemini_api_key)
+
+
+def generate_recommendations(
+    planner: str,
+    payload: dict[str, Any],
+    image_bytes: bytes | None = None,
+    image_mime_type: str | None = None,
+) -> dict[str, Any] | None:
+    client = _client()
+    if client is None:
+        return None
+
+    prompt = f"""
+You are PocketSmart AI, a budget-aware recommendation assistant.
+
+Planner: {planner}
+User input:
+{json.dumps(payload, indent=2, ensure_ascii=False)}
+
+Return ONLY valid JSON with exactly this shape:
+{{
+  "planner": "{planner}",
+  "budget": number,
+  "summary": "short explanation",
+  "allocations": {{"category": number}},
+  "recommendations": [
+    {{
+      "name": "item or service",
+      "category": "category",
+      "estimated_price": number,
+      "reason": "why it fits",
+      "platform": "Amazon or Flipkart or IKEA or Swiggy or Zomato or OYO",
+      "search_url": "https://example.com/search"
+    }}
+  ],
+  "tips": ["tip 1", "tip 2"],
+  "source": "gemini"
+}}
+
+Rules:
+- Respect the user's total budget.
+- Do not claim that a price is live or guaranteed.
+- Estimated prices must be sensible and should sum approximately within the budget.
+- Use platform search URLs, not fake product-detail URLs.
+- Keep the recommendation list practical.
+"""
+
+    contents: list[Any] = [prompt]
+    if image_bytes:
+        contents.append(
+            types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=image_mime_type or "image/jpeg",
+            )
+        )
+        contents.append(
+            "Use the outfit image only to infer broad visual coordination such as color and style."
+        )
+
+    try:
+        response = client.models.generate_content(
+            model=settings.gemini_model,
+            contents=contents,
+        )
+        return extract_json(getattr(response, "text", "") or "")
+    except Exception:
+        return None
+
+==========================================================================================
+FILE: app/recommendation_service.py
+==========================================================================================
+from urllib.parse import quote_plus
+from app.gemini_utils import generate_recommendations
+
+
+def search_url(platform: str, query: str) -> str:
+    q = quote_plus(query)
+
+    urls = {
+        "Amazon": f"https://www.amazon.in/s?k={q}",
+        "Flipkart": f"https://www.flipkart.com/search?q={q}",
+        "IKEA": f"https://www.ikea.com/in/en/search/?q={q}",
+        "Swiggy": f"https://www.swiggy.com/search?query={q}",
+        "Zomato": f"https://www.zomato.com/search?q={q}",
+        "OYO": f"https://www.oyorooms.com/search?location={q}",
+    }
+    return urls.get(platform, f"https://www.google.com/search?q={q}")
+
+
+def fallback_home(data: dict) -> dict:
+    budget = data["budget"]
+    categories = [
+        ("Lighting", data.get("lights", 0), 0.12),
+        ("Fans", data.get("fans", 0), 0.14),
+        ("Dining", data.get("dining_tables", 0), 0.18),
+        ("Sofa", data.get("sofas", 0), 0.28),
+        ("Beds", data.get("beds", 0), 0.28),
+    ]
+
+    allocations = {}
+    recommendations = []
+
+    for category, quantity, share in categories:
+        if quantity > 0:
+            amount = round(budget * share, 2)
+            allocations[category] = amount
+
+            platform = "IKEA" if category in {"Dining", "Sofa", "Beds"} else "Amazon"
+            query = f"{data.get('style', 'modern')} {category.lower()} home"
+            recommendations.append({
+                "name": f"{data.get('style', 'Modern').title()} {category} option",
+                "category": category,
+                "estimated_price": amount,
+                "reason": f"Fallback estimate for {quantity} unit(s), keeping the overall plan budget-aware.",
+                "platform": platform,
+                "search_url": search_url(platform, query),
+            })
+
+    if not recommendations:
+        allocations = {"General Home Decor": round(budget, 2)}
+        recommendations.append({
+            "name": "Budget-friendly home decor bundle",
+            "category": "Decor",
+            "estimated_price": round(budget, 2),
+            "reason": "A starter recommendation because no item quantities were selected.",
+            "platform": "Amazon",
+            "search_url": search_url("Amazon", f"{data.get('style', 'modern')} home decor"),
+        })
+
+    return {
+        "planner": "home",
+        "budget": budget,
+        "summary": "A fallback home plan was generated because Gemini was unavailable or returned an unusable response.",
+        "allocations": allocations,
+        "recommendations": recommendations,
+        "tips": [
+            "Compare final prices, delivery charges, and dimensions before buying.",
+            "Keep a small reserve instead of spending the entire budget.",
+        ],
+        "source": "fallback",
+    }
+
+
+def fallback_party(data: dict) -> dict:
+    budget = data["budget"]
+    allocations = {
+        "Catering": round(budget * 0.55, 2),
+        "Decoration": round(budget * 0.20, 2),
+        "Entertainment": round(budget * 0.15, 2),
+        "Reserve": round(budget * 0.10, 2),
+    }
+
+    food_platform = "Swiggy" if data.get("food_preference") != "restaurant" else "Zomato"
+
+    recommendations = [
+        {
+            "name": f"{data.get('event_type', 'Event').title()} catering plan",
+            "category": "Catering",
+            "estimated_price": allocations["Catering"],
+            "reason": f"Planned for approximately {data['guests']} guests.",
+            "platform": food_platform,
+            "search_url": search_url(food_platform, f"{data.get('event_type', 'event')} catering"),
+        },
+        {
+            "name": f"{data.get('decoration_style', 'Simple').title()} decoration",
+            "category": "Decoration",
+            "estimated_price": allocations["Decoration"],
+            "reason": "Keeps decoration meaningful without consuming the full budget.",
+            "platform": "Amazon",
+            "search_url": search_url("Amazon", f"{data.get('decoration_style', 'simple')} party decoration"),
+        },
+        {
+            "name": "Entertainment options",
+            "category": "Entertainment",
+            "estimated_price": allocations["Entertainment"],
+            "reason": "Reserved for music, games, or a small activity setup.",
+            "platform": "Google",
+            "search_url": search_url("Google", f"{data.get('event_type', 'party')} entertainment"),
+        },
+    ]
+
+    return {
+        "planner": "party",
+        "budget": budget,
+        "summary": "A fallback party plan was generated with proportional budget allocation.",
+        "allocations": allocations,
+        "recommendations": recommendations,
+        "tips": [
+            "Confirm guest count before placing food orders.",
+            "Keep the reserve for last-minute transport or extra food.",
+        ],
+        "source": "fallback",
+    }
+
+
+def fallback_jewelry(data: dict) -> dict:
+    budget = data["budget"]
+    recommendations = [
+        {
+            "name": f"{data.get('style', 'Elegant').title()} earrings",
+            "category": "Earrings",
+            "estimated_price": round(budget * 0.30, 2),
+            "reason": "A versatile starting point that can complement the selected occasion.",
+            "platform": "Amazon",
+            "search_url": search_url("Amazon", f"{data.get('style', 'elegant')} earrings {data.get('metal', 'any')}"),
+        },
+        {
+            "name": f"{data.get('style', 'Elegant').title()} necklace",
+            "category": "Necklace",
+            "estimated_price": round(budget * 0.45, 2),
+            "reason": "A main-piece allocation suitable for a coordinated look.",
+            "platform": "Flipkart",
+            "search_url": search_url("Flipkart", f"{data.get('style', 'elegant')} necklace {data.get('metal', 'any')}"),
+        },
+        {
+            "name": "Bracelet or bangle",
+            "category": "Bracelet",
+            "estimated_price": round(budget * 0.25, 2),
+            "reason": "Optional finishing piece within the remaining budget.",
+            "platform": "Amazon",
+            "search_url": search_url("Amazon", f"{data.get('style', 'elegant')} bracelet"),
+        },
+    ]
+
+    return {
+        "planner": "jewelry",
+        "budget": budget,
+        "summary": "A fallback jewelry plan was generated from the occasion, style, metal, and budget.",
+        "allocations": {
+            "Earrings": recommendations[0]["estimated_price"],
+            "Necklace": recommendations[1]["estimated_price"],
+            "Bracelet": recommendations[2]["estimated_price"],
+        },
+        "recommendations": recommendations,
+        "tips": [
+            "Use the outfit image and final clothing colors when making the final choice.",
+            "Check seller reviews, material details, and return policy before ordering.",
+        ],
+        "source": "fallback",
+    }
+
+
+def get_recommendations(planner: str, data: dict, image_bytes=None, image_mime_type=None):
+    result = generate_recommendations(
+        planner,
+        data,
+        image_bytes=image_bytes,
+        image_mime_type=image_mime_type,
+    )
+
+    if result:
+        result["source"] = "gemini"
+        return result
+
+    if planner == "home":
+        return fallback_home(data)
+    if planner == "party":
+        return fallback_party(data)
+    if planner == "jewelry":
+        return fallback_jewelry(data)
+
+    raise ValueError("Unknown planner type.")
+
+==========================================================================================
+FILE: app/routes/__init__.py
+==========================================================================================
+
+==========================================================================================
+FILE: app/routes/pages.py
+==========================================================================================
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+
+from app.dependencies import get_current_user
+
+router = APIRouter()
+templates = Jinja2Templates(directory="templates")
+
+
+def current_user_or_none(request: Request):
+    try:
+        return get_current_user(request)
+    except Exception:
+        return None
+
+
+@router.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "user": current_user_or_none(request)},
+    )
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@router.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request})
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    user = current_user_or_none(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {"request": request, "user": user},
+    )
+
+
+@router.get("/home-planner", response_class=HTMLResponse)
+async def home_planner(request: Request):
+    user = current_user_or_none(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        "home_planner.html",
+        {"request": request, "user": user},
+    )
+
+
+@router.get("/party-planner", response_class=HTMLResponse)
+async def party_planner(request: Request):
+    user = current_user_or_none(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        "party_planner.html",
+        {"request": request, "user": user},
+    )
+
+
+@router.get("/jewelry-planner", response_class=HTMLResponse)
+async def jewelry_planner(request: Request):
+    user = current_user_or_none(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        "jewelry_planner.html",
+        {"request": request, "user": user},
+    )
+
+
+@router.get("/history", response_class=HTMLResponse)
+async def history_page(request: Request):
+    user = current_user_or_none(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        "history.html",
+        {"request": request, "user": user},
+    )
+
+==========================================================================================
+FILE: app/routes/auth_routes.py
+==========================================================================================
+from fastapi import APIRouter, Request
+from fastapi.responses import RedirectResponse
+from jose import JWTError, jwt
+
+from app.auth import create_access_token, hash_password, verify_password, ALGORITHM
+from app.config import settings
+from app.database import get_connection
+from app.models import LoginRequest, RegisterRequest, TokenRequest
+
+router = APIRouter()
+
+
+@router.post("/register")
+async def register(data: RegisterRequest, request: Request):
+    username = data.username.strip()
+    email = data.email.strip().lower()
+
+    conn = get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM users WHERE username = ? OR email = ?",
+            (username, email),
+        ).fetchone()
+
+        if existing:
+            return {"success": False, "message": "Username or email already exists."}
+
+        cursor = conn.execute(
+            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+            (username, email, hash_password(data.password)),
+        )
+        conn.commit()
+        request.session["user_id"] = cursor.lastrowid
+        return {"success": True, "message": "Registration successful."}
+    finally:
+        conn.close()
+
+
+@router.post("/login")
+async def login(data: LoginRequest, request: Request):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM users WHERE username = ?",
+        (data.username.strip(),),
+    ).fetchone()
+    conn.close()
+
+    if not row or not verify_password(data.password, row["password_hash"]):
+        return {"success": False, "message": "Invalid username or password."}
+
+    request.session["user_id"] = row["id"]
+    return {"success": True, "message": "Login successful."}
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return {"success": True, "message": "Logged out successfully."}
+
+
+@router.post("/token")
+async def token(data: TokenRequest):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM users WHERE username = ?",
+        (data.username.strip(),),
+    ).fetchone()
+    conn.close()
+
+    if not row or not verify_password(data.password, row["password_hash"]):
+        return {"access_token": None, "token_type": "bearer", "message": "Invalid credentials."}
+
+    return {
+        "access_token": create_access_token(str(row["id"])),
+        "token_type": "bearer",
+    }
+
+
+@router.get("/verify-token")
+async def verify_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[ALGORITHM],
+        )
+        return {"valid": True, "subject": payload.get("sub")}
+    except JWTError:
+        return {"valid": False}
+
+==========================================================================================
+FILE: app/routes/planner_routes.py
+==========================================================================================
+import json
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from app.database import get_connection
+from app.dependencies import get_current_user
+from app.models import HomeRequest, PartyRequest, JewelryRequest
+from app.recommendation_service import get_recommendations
+
+router = APIRouter()
+
+
+def save_history(user_id: int, planner: str, request_data: dict, result: dict):
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO recommendation_history
+        (user_id, planner_type, request_json, response_json)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            planner,
+            json.dumps(request_data, ensure_ascii=False),
+            json.dumps(result, ensure_ascii=False),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+@router.post("/generate-home")
+async def generate_home(
+    data: HomeRequest,
+    user=Depends(get_current_user),
+):
+    payload = data.model_dump()
+    result = get_recommendations("home", payload)
+    save_history(user["id"], "home", payload, result)
+    return result
+
+
+@router.post("/generate-party")
+async def generate_party(
+    data: PartyRequest,
+    user=Depends(get_current_user),
+):
+    payload = data.model_dump()
+    result = get_recommendations("party", payload)
+    save_history(user["id"], "party", payload, result)
+    return result
+
+
+@router.post("/generate-jewelry")
+async def generate_jewelry(
+    budget: float = Form(...),
+    occasion: str = Form("party"),
+    style: str = Form("elegant"),
+    metal: str = Form("any"),
+    outfit_color: str = Form(""),
+    notes: str = Form(""),
+    outfit_image: UploadFile | None = File(default=None),
+    user=Depends(get_current_user),
+):
+    data = JewelryRequest(
+        budget=budget,
+        occasion=occasion,
+        style=style,
+        metal=metal,
+        outfit_color=outfit_color or None,
+        notes=notes,
+    )
+    payload = data.model_dump()
+
+    image_bytes = None
+    image_mime_type = None
+
+    if outfit_image and outfit_image.filename:
+        image_bytes = await outfit_image.read()
+        image_mime_type = outfit_image.content_type
+
+    result = get_recommendations(
+        "jewelry",
+        payload,
+        image_bytes=image_bytes,
+        image_mime_type=image_mime_type,
+    )
+    save_history(user["id"], "jewelry", payload, result)
+    return result
+
+
+@router.get("/history")
+async def history(user=Depends(get_current_user)):
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT id, planner_type, created_at
+        FROM recommendation_history
+        WHERE user_id = ?
+        ORDER BY id DESC
+        """,
+        (user["id"],),
+    ).fetchall()
+    conn.close()
+    return {"history": [dict(row) for row in rows]}
+
+
+@router.get("/recommendations-details/{history_id}")
+async def recommendation_details(
+    history_id: int,
+    user=Depends(get_current_user),
+):
+    conn = get_connection()
+    row = conn.execute(
+        """
+        SELECT *
+        FROM recommendation_history
+        WHERE id = ? AND user_id = ?
+        """,
+        (history_id, user["id"]),
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return {"success": False, "message": "History item not found."}
+
+    return {
+        "id": row["id"],
+        "planner_type": row["planner_type"],
+        "created_at": row["created_at"],
+        "request": json.loads(row["request_json"]),
+        "response": json.loads(row["response_json"]),
+    }
+
+==========================================================================================
+FILE: app/routes/session_routes.py
+==========================================================================================
+from fastapi import APIRouter, Request, Depends
+from app.dependencies import get_current_user
+from app.models import SessionDataRequest
+
+router = APIRouter()
+
+
+@router.get("/session-info")
+async def session_info(request: Request, user=Depends(get_current_user)):
+    return {
+        "logged_in": True,
+        "user": user,
+        "session_keys": list(request.session.keys()),
+    }
+
+
+@router.get("/session-data")
+async def get_session_data(request: Request, user=Depends(get_current_user)):
+    return {
+        key: value
+        for key, value in request.session.items()
+        if key != "user_id"
+    }
+
+
+@router.post("/session-data")
+async def set_session_data(
+    data: SessionDataRequest,
+    request: Request,
+    user=Depends(get_current_user),
+):
+    request.session[data.key] = data.value
+    return {"success": True, "key": data.key, "value": data.value}
+
+==========================================================================================
+FILE: templates/index.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PocketSmart AI</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<nav class="navbar">
+    <a class="brand" href="/">PocketSmart AI</a>
+    <div>
+        {% if user %}
+            <a href="/dashboard">Dashboard</a>
+            <a href="/history">History</a>
+            <button class="link-button" onclick="logout()">Logout</button>
+        {% else %}
+            <a href="/login">Login</a>
+            <a class="nav-cta" href="/register">Register</a>
+        {% endif %}
+    </div>
+</nav>
+
+<main class="hero">
+    <div class="hero-content">
+        <span class="badge">GENAI • BUDGET • RECOMMENDATIONS</span>
+        <h1>Plan smarter with <span>PocketSmart AI</span></h1>
+        <p>
+            Personalized budget-aware recommendations for home interiors,
+            parties, and jewelry.
+        </p>
+
+        {% if user %}
+            <a class="button primary" href="/dashboard">Open Dashboard</a>
+        {% else %}
+            <a class="button primary" href="/register">Get Started</a>
+            <a class="button secondary" href="/login">Login</a>
+        {% endif %}
+    </div>
+</main>
+
+<section class="container">
+    <h2>Three smart planners</h2>
+    <div class="card-grid">
+        <article class="card">
+            <div class="icon">🏠</div>
+            <h3>Home Interior</h3>
+            <p>Set a budget, rooms and item quantities, then generate a practical plan.</p>
+        </article>
+        <article class="card">
+            <div class="icon">🎉</div>
+            <h3>Party Planner</h3>
+            <p>Allocate a party budget across food, decoration, entertainment and reserve.</p>
+        </article>
+        <article class="card">
+            <div class="icon">💎</div>
+            <h3>Jewelry Planner</h3>
+            <p>Choose occasion and style, with optional outfit-image analysis.</p>
+        </article>
+    </div>
+</section>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
+
+==========================================================================================
+FILE: templates/login.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - PocketSmart AI</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<div class="auth-page">
+    <div class="auth-card">
+        <a class="brand" href="/">PocketSmart AI</a>
+        <h1>Welcome back</h1>
+        <p>Login to use your planners.</p>
+
+        <form id="loginForm">
+            <label>Username</label>
+            <input id="username" required>
+
+            <label>Password</label>
+            <input id="password" type="password" required>
+
+            <button class="button primary full" type="submit">Login</button>
+        </form>
+
+        <p id="message" class="message"></p>
+        <p>New user? <a href="/register">Create an account</a></p>
+    </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+document.getElementById("loginForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const response = await fetch("/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            username: document.getElementById("username").value,
+            password: document.getElementById("password").value
+        })
+    });
+
+    const data = await response.json();
+    document.getElementById("message").textContent = data.message;
+
+    if (data.success) {
+        window.location.href = "/dashboard";
+    }
+});
+</script>
+</body>
+</html>
+
+==========================================================================================
+FILE: templates/register.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - PocketSmart AI</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<div class="auth-page">
+    <div class="auth-card">
+        <a class="brand" href="/">PocketSmart AI</a>
+        <h1>Create account</h1>
+        <p>Start building budget-aware plans.</p>
+
+        <form id="registerForm">
+            <label>Username</label>
+            <input id="username" minlength="3" required>
+
+            <label>Email</label>
+            <input id="email" type="email" required>
+
+            <label>Password</label>
+            <input id="password" type="password" minlength="6" required>
+
+            <button class="button primary full" type="submit">Register</button>
+        </form>
+
+        <p id="message" class="message"></p>
+        <p>Already registered? <a href="/login">Login</a></p>
+    </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+document.getElementById("registerForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const response = await fetch("/register", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            username: document.getElementById("username").value,
+            email: document.getElementById("email").value,
+            password: document.getElementById("password").value
+        })
+    });
+
+    const data = await response.json();
+    document.getElementById("message").textContent = data.message;
+
+    if (data.success) {
+        window.location.href = "/dashboard";
+    }
+});
+</script>
+</body>
+</html>
+
+==========================================================================================
+FILE: templates/dashboard.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - PocketSmart AI</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<nav class="navbar">
+    <a class="brand" href="/">PocketSmart AI</a>
+    <div>
+        <a href="/history">History</a>
+        <button class="link-button" onclick="logout()">Logout</button>
+    </div>
+</nav>
+
+<main class="container">
+    <div class="page-heading">
+        <span class="badge">DASHBOARD</span>
+        <h1>Hi, {{ user.username }} 👋</h1>
+        <p>Choose a planner and let PocketSmart AI build a budget-aware recommendation plan.</p>
+    </div>
+
+    <div class="card-grid">
+        <a class="card planner-card" href="/home-planner">
+            <div class="icon">🏠</div>
+            <h2>Home Interior</h2>
+            <p>Rooms, lights, fans, dining tables, sofas and beds.</p>
+        </a>
+
+        <a class="card planner-card" href="/party-planner">
+            <div class="icon">🎉</div>
+            <h2>Party Planner</h2>
+            <p>Budget, guests, event, venue, food and decoration.</p>
+        </a>
+
+        <a class="card planner-card" href="/jewelry-planner">
+            <div class="icon">💎</div>
+            <h2>Jewelry Planner</h2>
+            <p>Occasion, style, metal and optional outfit image.</p>
+        </a>
+    </div>
+</main>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
+
+==========================================================================================
+FILE: templates/home_planner.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home Planner - PocketSmart AI</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<nav class="navbar">
+    <a class="brand" href="/dashboard">PocketSmart AI</a>
+    <div><a href="/history">History</a></div>
+</nav>
+
+<main class="container narrow">
+    <div class="page-heading">
+        <span class="badge">HOME INTERIOR</span>
+        <h1>Build your home plan</h1>
+        <p>Enter your total budget and quantities.</p>
+    </div>
+
+    <form id="homeForm" class="form-card">
+        <label>Total budget (₹)</label>
+        <input name="budget" type="number" min="1" step="1" required>
+
+        <label>Rooms</label>
+        <div class="checkbox-grid">
+            <label><input type="checkbox" name="rooms" value="Living Room"> Living Room</label>
+            <label><input type="checkbox" name="rooms" value="Kitchen"> Kitchen</label>
+            <label><input type="checkbox" name="rooms" value="Bedroom"> Bedroom</label>
+            <label><input type="checkbox" name="rooms" value="Dining Room"> Dining Room</label>
+        </div>
+
+        <label>Number of lights</label>
+        <input name="lights" type="number" min="0" value="0">
+
+        <label>Number of fans</label>
+        <input name="fans" type="number" min="0" value="0">
+
+        <label>Dining tables</label>
+        <input name="dining_tables" type="number" min="0" value="0">
+
+        <label>Sofas</label>
+        <input name="sofas" type="number" min="0" value="0">
+
+        <label>Beds</label>
+        <input name="beds" type="number" min="0" value="0">
+
+        <label>Style</label>
+        <select name="style">
+            <option>modern</option>
+            <option>minimalist</option>
+            <option>classic</option>
+            <option>industrial</option>
+            <option>boho</option>
+        </select>
+
+        <label>Extra notes</label>
+        <textarea name="notes" rows="4" placeholder="Room size, colors, special requirements..."></textarea>
+
+        <button class="button primary full" type="submit">Generate Home Recommendations</button>
+    </form>
+
+    <div id="result"></div>
+</main>
+
+<script src="/static/js/app.js"></script>
+<script>
+document.getElementById("homeForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const form = new FormData(event.target);
+    const rooms = [...document.querySelectorAll('input[name="rooms"]:checked')].map(x => x.value);
+
+    const payload = {
+        budget: Number(form.get("budget")),
+        rooms,
+        lights: Number(form.get("lights")),
+        fans: Number(form.get("fans")),
+        dining_tables: Number(form.get("dining_tables")),
+        sofas: Number(form.get("sofas")),
+        beds: Number(form.get("beds")),
+        style: form.get("style"),
+        notes: form.get("notes")
+    };
+
+    const result = document.getElementById("result");
+    result.innerHTML = '<div class="loading">Generating...</div>';
+
+    const response = await fetch("/generate-home", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+    result.innerHTML = renderRecommendations(data);
+});
+</script>
+</body>
+</html>
+
+==========================================================================================
+FILE: templates/party_planner.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Party Planner - PocketSmart AI</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<nav class="navbar">
+    <a class="brand" href="/dashboard">PocketSmart AI</a>
+    <div><a href="/history">History</a></div>
+</nav>
+
+<main class="container narrow">
+    <div class="page-heading">
+        <span class="badge">PARTY PLANNER</span>
+        <h1>Plan your event</h1>
+        <p>Allocate your budget across food, decoration and entertainment.</p>
+    </div>
+
+    <form id="partyForm" class="form-card">
+        <label>Total budget (₹)</label>
+        <input name="budget" type="number" min="1" step="1" required>
+
+        <label>Number of guests</label>
+        <input name="guests" type="number" min="1" required>
+
+        <label>Event type</label>
+        <select name="event_type">
+            <option>birthday</option>
+            <option>wedding</option>
+            <option>corporate</option>
+            <option>anniversary</option>
+            <option>engagement</option>
+            <option>family function</option>
+        </select>
+
+        <label>Venue</label>
+        <select name="venue">
+            <option>home</option>
+            <option>hall</option>
+            <option>restaurant</option>
+            <option>outdoor</option>
+            <option>hotel</option>
+        </select>
+
+        <label>Food preference</label>
+        <select name="food_preference">
+            <option>mixed</option>
+            <option>vegetarian</option>
+            <option>non-vegetarian</option>
+            <option>restaurant</option>
+        </select>
+
+        <label>Decoration style</label>
+        <select name="decoration_style">
+            <option>simple</option>
+            <option>elegant</option>
+            <option>colorful</option>
+            <option>premium</option>
+        </select>
+
+        <label>Extra notes</label>
+        <textarea name="notes" rows="4"></textarea>
+
+        <button class="button primary full" type="submit">Generate Party Plan</button>
+    </form>
+
+    <div id="result"></div>
+</main>
+
+<script src="/static/js/app.js"></script>
+<script>
+document.getElementById("partyForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const form = new FormData(event.target);
+    const payload = {
+        budget: Number(form.get("budget")),
+        guests: Number(form.get("guests")),
+        event_type: form.get("event_type"),
+        venue: form.get("venue"),
+        food_preference: form.get("food_preference"),
+        decoration_style: form.get("decoration_style"),
+        notes: form.get("notes")
+    };
+
+    const result = document.getElementById("result");
+    result.innerHTML = '<div class="loading">Generating...</div>';
+
+    const response = await fetch("/generate-party", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+    result.innerHTML = renderRecommendations(data);
+});
+</script>
+</body>
+</html>
+
+==========================================================================================
+FILE: templates/jewelry_planner.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jewelry Planner - PocketSmart AI</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<nav class="navbar">
+    <a class="brand" href="/dashboard">PocketSmart AI</a>
+    <div><a href="/history">History</a></div>
+</nav>
+
+<main class="container narrow">
+    <div class="page-heading">
+        <span class="badge">JEWELRY PLANNER</span>
+        <h1>Match jewelry to your occasion</h1>
+        <p>Upload an outfit image optionally for multimodal AI analysis.</p>
+    </div>
+
+    <form id="jewelryForm" class="form-card" enctype="multipart/form-data">
+        <label>Budget (₹)</label>
+        <input name="budget" type="number" min="1" step="1" required>
+
+        <label>Occasion</label>
+        <select name="occasion">
+            <option>party</option>
+            <option>wedding</option>
+            <option>engagement</option>
+            <option>office</option>
+            <option>festival</option>
+            <option>casual</option>
+        </select>
+
+        <label>Style</label>
+        <select name="style">
+            <option>elegant</option>
+            <option>minimalist</option>
+            <option>traditional</option>
+            <option>modern</option>
+            <option>statement</option>
+        </select>
+
+        <label>Metal preference</label>
+        <select name="metal">
+            <option>any</option>
+            <option>gold tone</option>
+            <option>silver tone</option>
+            <option>rose gold tone</option>
+            <option>pearl</option>
+        </select>
+
+        <label>Outfit color (optional)</label>
+        <input name="outfit_color" placeholder="e.g. black, blue, maroon">
+
+        <label>Outfit image (optional)</label>
+        <input name="outfit_image" type="file" accept="image/png,image/jpeg,image/webp">
+
+        <label>Extra notes</label>
+        <textarea name="notes" rows="4" placeholder="Neckline, sleeve style, preference..."></textarea>
+
+        <button class="button primary full" type="submit">Generate Jewelry Recommendations</button>
+    </form>
+
+    <div id="result"></div>
+</main>
+
+<script src="/static/js/app.js"></script>
+<script>
+document.getElementById("jewelryForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const form = new FormData(event.target);
+    const result = document.getElementById("result");
+    result.innerHTML = '<div class="loading">Analyzing and generating...</div>';
+
+    const response = await fetch("/generate-jewelry", {
+        method: "POST",
+        body: form
+    });
+
+    const data = await response.json();
+    result.innerHTML = renderRecommendations(data);
+});
+</script>
+</body>
+</html>
+
+==========================================================================================
+FILE: templates/history.html
+==========================================================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>History - PocketSmart AI</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<nav class="navbar">
+    <a class="brand" href="/dashboard">PocketSmart AI</a>
+    <div><a href="/dashboard">Dashboard</a></div>
+</nav>
+
+<main class="container">
+    <div class="page-heading">
+        <span class="badge">HISTORY</span>
+        <h1>Your recommendation history</h1>
+    </div>
+    <div id="historyList" class="history-list">Loading...</div>
+</main>
+
+<script src="/static/js/app.js"></script>
+<script>
+async function loadHistory() {
+    const response = await fetch("/history");
+    const data = await response.json();
+    const box = document.getElementById("historyList");
+
+    if (!data.history || data.history.length === 0) {
+        box.innerHTML = '<div class="empty">No recommendations yet.</div>';
+        return;
+    }
+
+    box.innerHTML = data.history.map(item => `
+        <div class="history-item">
+            <div>
+                <strong>${escapeHtml(item.planner_type.toUpperCase())}</strong>
+                <span>${escapeHtml(item.created_at)}</span>
+            </div>
+            <button class="button secondary" onclick="viewDetails(${item.id})">View</button>
+        </div>
+    `).join("");
+}
+
+async function viewDetails(id) {
+    const response = await fetch("/recommendations-details/" + id);
+    const data = await response.json();
+
+    if (!data.response) return;
+
+    document.getElementById("historyList").insertAdjacentHTML(
+        "afterbegin",
+        renderRecommendations(data.response)
+    );
+}
+
+loadHistory();
+</script>
+</body>
+</html>
+
+==========================================================================================
+FILE: static/css/styles.css
+==========================================================================================
+:root {
+    --bg: #0b1020;
+    --surface: #121a2d;
+    --surface-2: #18233b;
+    --text: #f6f7fb;
+    --muted: #aab4ca;
+    --accent: #7c5cff;
+    --accent-2: #20c997;
+    --border: rgba(255,255,255,.09);
+    --danger: #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    background: radial-gradient(circle at top right, #1d2850 0, var(--bg) 45%);
+    color: var(--text);
+    min-height: 100vh;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.navbar {
+    height: 70px;
+    padding: 0 5%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: rgba(11,16,32,.75);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.navbar > div {
+    display: flex;
+    gap: 18px;
+    align-items: center;
+}
+
+.brand {
+    font-weight: 800;
+    font-size: 1.2rem;
+    letter-spacing: -.02em;
+}
+
+.nav-cta, .button.primary {
+    background: var(--accent);
+    color: white;
+}
+
+.link-button {
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+}
+
+.hero {
+    min-height: 560px;
+    display: grid;
+    place-items: center;
+    padding: 70px 5%;
+    text-align: center;
+}
+
+.hero-content {
+    max-width: 850px;
+}
+
+.hero h1 {
+    font-size: clamp(2.5rem, 7vw, 5.2rem);
+    line-height: .98;
+    margin: 20px 0;
+}
+
+.hero h1 span {
+    color: #a99aff;
+}
+
+.hero p, .page-heading p {
+    color: var(--muted);
+    font-size: 1.1rem;
+    line-height: 1.7;
+}
+
+.badge {
+    display: inline-block;
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: #c9c1ff;
+    font-size: .75rem;
+    letter-spacing: .12em;
+}
+
+.container {
+    width: min(1100px, 90%);
+    margin: 0 auto;
+    padding: 60px 0;
+}
+
+.container.narrow {
+    width: min(760px, 92%);
+}
+
+.page-heading {
+    margin-bottom: 30px;
+}
+
+.page-heading h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    margin: 12px 0;
+}
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+}
+
+.card, .form-card, .auth-card {
+    background: linear-gradient(180deg, rgba(24,35,59,.95), rgba(18,26,45,.95));
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 28px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.2);
+}
+
+.card h2, .card h3 {
+    margin-top: 10px;
+}
+
+.card p {
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+.planner-card {
+    transition: transform .2s ease, border-color .2s ease;
+}
+
+.planner-card:hover {
+    transform: translateY(-4px);
+    border-color: rgba(124,92,255,.6);
+}
+
+.icon {
+    font-size: 2.5rem;
+}
+
+.button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 13px 18px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    font-weight: 700;
+    margin: 5px;
+}
+
+.button.secondary {
+    background: transparent;
+    color: var(--text);
+}
+
+.full {
+    width: 100%;
+    margin: 10px 0 0;
+}
+
+.auth-page {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 25px;
+}
+
+.auth-card {
+    width: min(450px, 100%);
+}
+
+.auth-card h1 {
+    margin-bottom: 8px;
+}
+
+.auth-card p {
+    color: var(--muted);
+}
+
+label {
+    display: block;
+    margin: 16px 0 7px;
+    font-weight: 700;
+}
+
+input, select, textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 13px 14px;
+    background: #0e1628;
+    color: var(--text);
+    outline: none;
+}
+
+input:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+}
+
+.checkbox-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.checkbox-grid label {
+    margin: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--muted);
+}
+
+.checkbox-grid input {
+    width: auto;
+}
+
+.message {
+    min-height: 24px;
+    color: #a99aff !important;
+}
+
+.loading, .empty {
+    margin-top: 25px;
+    padding: 25px;
+    border: 1px dashed var(--border);
+    border-radius: 16px;
+    color: var(--muted);
+}
+
+.result-card {
+    margin-top: 30px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 25px;
+}
+
+.recommendation {
+    padding: 18px 0;
+    border-top: 1px solid var(--border);
+}
+
+.recommendation:first-child {
+    border-top: 0;
+}
+
+.price {
+    font-size: 1.15rem;
+    font-weight: 800;
+}
+
+.small {
+    color: var(--muted);
+    font-size: .9rem;
+}
+
+.chip {
+    display: inline-block;
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(124,92,255,.14);
+    color: #c9c1ff;
+    margin-right: 5px;
+}
+
+.history-list {
+    display: grid;
+    gap: 12px;
+}
+
+.history-item {
+    padding: 18px 20px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.history-item span {
+    display: block;
+    color: var(--muted);
+    margin-top: 5px;
+    font-size: .85rem;
+}
+
+@media (max-width: 800px) {
+    .card-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .navbar {
+        padding: 0 4%;
+    }
+
+    .navbar > div {
+        gap: 9px;
+    }
+}
+
+@media (max-width: 500px) {
+    .hero {
+        min-height: 500px;
+    }
+
+    .checkbox-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+==========================================================================================
+FILE: static/js/app.js
+==========================================================================================
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function money(value) {
+    const n = Number(value || 0);
+    return "₹" + n.toLocaleString("en-IN", {
+        maximumFractionDigits: 2
+    });
+}
+
+function renderRecommendations(data) {
+    if (!data || data.detail) {
+        return `<div class="result-card"><p>${escapeHtml(data?.detail || "Something went wrong.")}</p></div>`;
+    }
+
+    const allocations = Object.entries(data.allocations || {})
+        .map(([key, value]) =>
+            `<span class="chip">${escapeHtml(key)}: ${money(value)}</span>`
+        ).join("");
+
+    const recommendations = (data.recommendations || []).map(item => `
+        <div class="recommendation">
+            <h3>${escapeHtml(item.name)}</h3>
+            <p class="small">${escapeHtml(item.category)} • ${escapeHtml(item.platform)}</p>
+            <p class="price">${money(item.estimated_price)}</p>
+            <p>${escapeHtml(item.reason)}</p>
+            <a class="button secondary" target="_blank" rel="noopener"
+               href="${escapeHtml(item.search_url)}">Search on ${escapeHtml(item.platform)}</a>
+        </div>
+    `).join("");
+
+    const tips = (data.tips || []).map(t => `<li>${escapeHtml(t)}</li>`).join("");
+
+    return `
+        <div class="result-card">
+            <span class="badge">${escapeHtml(data.source || "result").toUpperCase()}</span>
+            <h2>${escapeHtml(data.summary || "Your recommendation plan")}</h2>
+            <p><strong>Total budget:</strong> ${money(data.budget)}</p>
+
+            <h3>Budget allocation</h3>
+            <div>${allocations}</div>
+
+            <h3>Recommendations</h3>
+            ${recommendations}
+
+            <h3>Tips</h3>
+            <ul>${tips}</ul>
+        </div>
+    `;
+}
+
+async function logout() {
+    await fetch("/logout", {method: "POST"});
+    window.location.href = "/";
+}
+
+==========================================================================================
+FILE: static/uploads/.gitkeep
+==========================================================================================
+
+==========================================================================================
+FILE: tests/conftest.py
+==========================================================================================
+import os
+os.environ["DATABASE_PATH"] = "data/test_pocketsmart.db"
+
+import pytest
+from fastapi.testclient import TestClient
+
+from main import app
+from app.database import init_db
+
+
+@pytest.fixture
+def client():
+    init_db()
+    with TestClient(app) as test_client:
+        yield test_client
+
+==========================================================================================
+FILE: tests/test_app.py
+==========================================================================================
+def register_and_login(client):
+    register = client.post(
+        "/register",
+        json={
+            "username": "testuser",
+            "email": "testuser@example.com",
+            "password": "password123",
+        },
+    )
+
+    if not register.json().get("success"):
+        client.post(
+            "/login",
+            json={
+                "username": "testuser",
+                "password": "password123",
+            },
+        )
+
+
+def test_health(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_register_and_session(client):
+    register_and_login(client)
+
+    response = client.get("/session-info")
+    assert response.status_code == 200
+    assert response.json()["logged_in"] is True
+
+
+def test_home_planner(client):
+    register_and_login(client)
+
+    response = client.post(
+        "/generate-home",
+        json={
+            "budget": 50000,
+            "rooms": ["Living Room", "Bedroom"],
+            "lights": 4,
+            "fans": 2,
+            "dining_tables": 1,
+            "sofas": 1,
+            "beds": 1,
+            "style": "modern",
+            "notes": "",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["planner"] == "home"
+    assert len(response.json()["recommendations"]) > 0
+
+
+def test_party_planner(client):
+    register_and_login(client)
+
+    response = client.post(
+        "/generate-party",
+        json={
+            "budget": 30000,
+            "guests": 30,
+            "event_type": "birthday",
+            "venue": "home",
+            "food_preference": "mixed",
+            "decoration_style": "simple",
+            "notes": "",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["planner"] == "party"
+
+
+def test_jewelry_planner_requires_login(client):
+    response = client.post(
+        "/generate-jewelry",
+        data={
+            "budget": "10000",
+            "occasion": "party",
+            "style": "elegant",
+            "metal": "any",
+            "outfit_color": "black",
+            "notes": "",
+        },
+    )
+    assert response.status_code == 401
